@@ -1,0 +1,130 @@
+# import TensorFlow
+import tensorflow as tf
+
+#Check the version of TensorFlow you are using
+print(tf.__version__)
+print(tf.config.list_physical_devices('GPU'))
+# specify the data file name and url
+url = 'https://archive.ics.uci.edu/ml/machine-learning-databases/00240/'
+datafile = url + 'UCI%20HAR%20Dataset.zip'
+
+# download the zip file from the web server using curl
+!curl $datafile --output UCI_HAR_Dataset.zip
+
+# unzip the file
+!unzip -qq UCI_HAR_Dataset.zip
+# change the directory name to remove spaces
+!mv -f UCI\ HAR\ Dataset UCI_HAR_DATASET
+# load required libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import random
+from sklearn.model_selection import train_test_split
+# TRAIN DATA - BODY ONLY
+# load the data for X,Y and Z coordinates for training data
+xx=np.loadtxt('/content/UCI_HAR_DATASET/train/Inertial Signals/body_acc_x_train.txt').astype(np.float32)
+yy=np.loadtxt('/content/UCI_HAR_DATASET/train/Inertial Signals/body_acc_y_train.txt').astype(np.float32)
+zz=np.loadtxt('/content/UCI_HAR_DATASET/train/Inertial Signals/body_acc_z_train.txt').astype(np.float32)
+
+# concatenate the arrays along the last dimension
+# (using None here adds an extra dimension of size 1 to the end of the array)
+x_train_body_only = np.concatenate((xx[:,:,None],yy[:,:,None],zz[:,:,None]),axis=2)
+print('shape x_train_body_only: ',x_train_body_only.shape)
+
+# TEST DATA - BODY ONLY
+# load the data for X,Y and Z coordinates for test data
+xx=np.loadtxt('/content/UCI_HAR_DATASET/test/Inertial Signals/body_acc_x_test.txt').astype(np.float32)
+yy=np.loadtxt('/content/UCI_HAR_DATASET/test/Inertial Signals/body_acc_y_test.txt').astype(np.float32)
+zz=np.loadtxt('/content/UCI_HAR_DATASET/test/Inertial Signals/body_acc_z_test.txt').astype(np.float32)
+
+# concatenate the arrays along the last dimension
+# (using None here adds an extra dimension of size 1 to the end of the array)
+x_test_body_only = np.concatenate((xx[:,:,None],yy[:,:,None],zz[:,:,None]),axis=2)
+print('shape x_test_body_only: ',x_test_body_only.shape)
+
+# TRAIN data - RESPONSE 
+y_train = np.loadtxt('UCI_HAR_DATASET/train/y_train.txt').astype(np.float32)-1
+print('shape y_train: ',y_train.shape)
+
+# TEST data - RESPONSE 
+y_test = np.loadtxt('UCI_HAR_DATASET/test/y_test.txt').astype(np.float32)-1
+print('shape y_test: ',y_test.shape)
+# one hot encoding for six categories:
+y_train_enc  = tf.keras.utils.to_categorical(y_train)
+
+print('shape y_train after one hot enc.: ',y_train_enc.shape)
+# load label data sets
+activity_labels = pd.read_csv("/content/UCI_HAR_DATASET/activity_labels.txt", sep=' ', names=["Class_ID", "Class_Name"])
+
+# get time series measurements for test data, all coordinates as data frame
+df_body_acc_x_test = pd.DataFrame(xx)
+df_body_acc_y_test = pd.DataFrame(yy)
+df_body_acc_z_test = pd.DataFrame(zz)
+
+# get y_test labels as data frame
+y_test_lbl = pd.DataFrame(y_test, columns = ["Class_ID"])
+y_test_lbl = pd.merge(y_test_lbl,activity_labels,on='Class_ID',how='left')
+
+# prepare melting
+df_body_acc_x_test['observation'] = df_body_acc_x_test.index
+df_body_acc_x_test['class'] = y_test_lbl['Class_Name']
+
+df_body_acc_y_test['observation'] = df_body_acc_y_test.index
+df_body_acc_y_test['class'] = y_test_lbl['Class_Name']
+
+df_body_acc_z_test['observation'] = df_body_acc_z_test.index
+df_body_acc_z_test['class'] = y_test_lbl['Class_Name']
+
+# melt time series columns into rows for all three coordinates seperately
+test_measure_x = df_body_acc_x_test.melt(id_vars=["observation", "class"],  var_name="time", value_name="X").sort_values(["observation", "class", "time"])
+test_measure_y = df_body_acc_y_test.melt(id_vars=["observation", "class"],  var_name="time", value_name="Y").sort_values(["observation", "class", "time"])
+test_measure_z = df_body_acc_z_test.melt(id_vars=["observation", "class"],  var_name="time", value_name="Z").sort_values(["observation", "class", "time"])
+
+# join all three coordinate measurements column-wise into one final data frame for plotting
+test_measure_xyz = test_measure_x
+test_measure_xyz['Y'] = test_measure_y['Y']
+test_measure_xyz['Z'] = test_measure_z['Z']
+# select the data for a random measurement 
+plot_data = test_measure_xyz[test_measure_xyz['observation'] == 992]
+
+# or plot_data = test_measure_xyz[test_measure_xyz['observation'] == 2481]
+
+# plot the time series for all three coordinates into one plot
+plt.plot('time', 'X', data=plot_data)
+plt.plot('time', 'Y', data=plot_data)
+plt.plot('time', 'Z', data=plot_data)
+plt.title("time series for observation 992: WALKING")
+plt.legend()
+plt.show()
+#create validation and training data sets
+x_train, x_valid, y_train, y_valid = train_test_split(x_train_body_only, y_train_enc, test_size=0.2, random_state=42)
+
+print(x_train.shape)
+print(x_valid.shape)
+# create model with different layers
+model = tf.keras.Sequential()
+
+model.add(tf.keras.layers.InputLayer(input_shape=(128,3)))
+
+model.add(tf.keras.layers.Conv1D(filters=256, kernel_size=10))
+model.add(tf.keras.layers.BatchNormalization())
+
+model.add(tf.keras.layers.ReLU())
+model.add(tf.keras.layers.GlobalAveragePooling1D())
+model.add(tf.keras.layers.Dense(units=6, activation=tf.nn.softmax))
+
+
+# compile model and prepare tensorBoard
+model.compile(optimizer=tf.keras.optimizers.Adam(0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+
+# track training in TensorBoard
+callbacks = [tf.keras.callbacks.TensorBoard(log_dir=logdir)]
+
+# run the model
+model.fit(x_train, y_train, epochs=100, batch_size=32, callbacks=callbacks, validation_data=(x_valid, y_valid))
+predictions = model.predict(x_test_body_only)
+y_pred = np.argmax(predictions, axis=-1)
+
+print('test accuracy part 2: ', np.sum(y_pred==y_test)/len(y_test))
